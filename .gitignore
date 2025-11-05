@@ -1,0 +1,40 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+*.log
+
+# Virtual envs
+.venv/
+.venv1/
+env/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Build / cache
+dist/
+build/
+.eggs/
+.cache/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+
+# PyCharm / IntelliJ
+.idea/
+*.iml
+
+# Models & heavy artifacts
+*.onnx
+*.pt
+
+# Videos / large binaries (use LFS)
+*.mp4
+*.mov
+*.avi
