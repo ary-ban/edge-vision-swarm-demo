@@ -1,4 +1,4 @@
-# Scaffold to fine-tune YOLOv8n on a thermal (IR) dataset once we have procure one.
+# Scaffold to fine-tune YOLOv8n on a thermal (IR) dataset
 from ultralytics import YOLO
 
 def main():
