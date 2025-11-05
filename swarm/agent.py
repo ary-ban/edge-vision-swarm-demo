@@ -6,7 +6,6 @@
 # - receives assignment and computes a pan/tilt "error" (stub for gimbal)
 
 import argparse, time, cv2, numpy as np, onnxruntime as ort
-from pathlib import Path
 from common import (
     COORD_LISTEN, make_rx_socket, make_tx_socket, send_json, recv_json,
     msg_heartbeat, msg_detections
@@ -14,7 +13,6 @@ from common import (
 
 # --- display helpers to fit window on screen ---
 def get_screen_size():
-    # Works on Windows; falls back to 1920x1080 elsewhere
     try:
         import ctypes
         user32 = ctypes.windll.user32
@@ -109,6 +107,11 @@ def main():
     ap.add_argument("--source", default="0", help="0 for webcam or path to video")
     ap.add_argument("--conf", type=float, default=0.25)
     ap.add_argument("--iou",  type=float, default=0.45)
+    # NEW: mapping local center to shared/global X for cross-agent fusion
+    ap.add_argument("--fov_scale_x", type=float, default=1.0,
+                    help="scale factor to map local cx to a shared global X")
+    ap.add_argument("--fov_offset_x", type=float, default=0.0,
+                    help="offset (pixels) to map local cx to a shared global X")
     args = ap.parse_args()
 
     # UDP sockets
@@ -129,6 +132,9 @@ def main():
 
     last_hb = 0
     assign_mode = "none"
+    assigned_local = None
+    assigned_nudge = None
+    assigned_cls = None
 
     while True:
         # Heartbeat @ 2 Hz
@@ -153,17 +159,21 @@ def main():
         boxes /= gain
         keep = nms(boxes, scores, iou_thr=args.iou, score_thr=args.conf)
 
-        # Pick best detection (our "target") for demo
         target = None
         if len(keep):
             i = keep[0]  # highest score after sort
             x1,y1,x2,y2 = boxes[i]
             cx, cy = int((x1+x2)/2), int((y1+y2)/2)
+            # NEW: map to shared/global horizontal axis for cross-agent fusion
+            gx = args.fov_scale_x * cx + args.fov_offset_x
+            gy = cy
             target = {
                 "c": (COCO_NAMES[class_ids[i]] if 0 <= class_ids[i] < len(COCO_NAMES) else str(int(class_ids[i]))),
                 "p": float(scores[i]),
-                "cx": int(cx), "cy": int(cy),
-                "box": [int(x1), int(y1), int(x2), int(y2)]
+                "cx": int(cx), "cy": int(cy),     # local
+                "gx": float(gx), "gy": float(gy), # shared/global
+                "box": [int(x1), int(y1), int(x2), int(y2)],
+                "ow": int(ow), "oh": int(oh)
             }
 
         # Send detections
@@ -171,32 +181,49 @@ def main():
 
         # Read assignment (non-blocking)
         msg, _ = recv_json(rx)
-        if msg and msg.get("t") == "assign" and msg.get("to") == args.id:
-            assign_mode = msg.get("mode", "track_best")
+        if isinstance(msg, dict) and msg.get("t") == "assign" and msg.get("to") == args.id:
+            assign_mode   = msg.get("mode", "none")
+            assigned_local = msg.get("local")  # may be None when mode == "search"
+            assigned_nudge = msg.get("nudge")
+            assigned_cls   = msg.get("target_cls")
 
         # Draw overlay
         vis = frame.copy()
-        if target:
-            x1,y1,x2,y2 = target["box"]
+        if assign_mode == "track" and assigned_local:
+            x1,y1,x2,y2 = map(int, assigned_local["box"])
+            cx, cy = int(assigned_local["cx"]), int(assigned_local["cy"])
             cv2.rectangle(vis, (x1,y1), (x2,y2), (0,255,0), 2)
-            cv2.putText(vis, f'{target["c"]} {target["p"]:.2f}', (x1, max(0,y1-6)),
+            label = f'ASSIGNED {assigned_cls or ""} {assigned_local.get("conf",0):.2f}'
+            cv2.putText(vis, label, (x1, max(0,y1-6)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
             # gimbal error (stub): normalized error from image center
             midx, midy = ow//2, oh//2
-            ex = (target["cx"] - midx) / max(midx,1)
-            ey = (target["cy"] - midy) / max(midy,1)
-            cv2.line(vis, (midx, midy), (target["cx"], target["cy"]), (0,255,255), 2)
-            cv2.putText(vis, f'err:({ex:+.2f},{ey:+.2f}) mode:{assign_mode}',
+            ex = (cx - midx) / max(midx,1)
+            ey = (cy - midy) / max(midy,1)
+            cv2.line(vis, (midx, midy), (cx, cy), (0,255,255), 2)
+            # show pan-rate nudge if provided
+            if assigned_nudge and "pan_rate_dps" in assigned_nudge:
+                txt = f'Nudge: {assigned_nudge["pan_rate_dps"]:+.1f}°/s'
+                cv2.putText(vis, txt, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,255), 2)
+            cv2.putText(vis, f'mode:{assign_mode} err:({ex:+.2f},{ey:+.2f})',
                         (10, oh-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
+
         else:
-            cv2.putText(vis, f'No target | mode:{assign_mode}', (10, oh-10),
+            # fallback: draw our best local target (if any)
+            if target:
+                x1,y1,x2,y2 = target["box"]
+                cv2.rectangle(vis, (x1,y1), (x2,y2), (0,255,0), 2)
+                cv2.putText(vis, f'{target["c"]} {target["p"]:.2f}', (x1, max(0,y1-6)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
+                midx, midy = ow//2, oh//2
+                cv2.line(vis, (midx, midy), (target["cx"], target["cy"]), (0,255,255), 2)
+            cv2.putText(vis, f'No assignment | mode:{assign_mode}', (10, oh-10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
 
         fps = 1.0 / max(time.time() - t0, 1e-6)
         cv2.putText(vis, f'Agent {args.id} | FPS:{fps:.1f}', (10,30),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
 
-        # ---- Auto-scale the display to fit the screen (no cropping) ----
         vh, vw = vis.shape[:2]
         disp_w, disp_h, _ = fit_to_screen(vw, vh, max_frac=0.90)
         if (disp_w, disp_h) != (vw, vh):
@@ -204,9 +231,8 @@ def main():
         else:
             vis_disp = vis
         cv2.resizeWindow(win_name, disp_w, disp_h)
-        cv2.moveWindow(win_name, 20, 20)  # tweak if you want a different position
+        cv2.moveWindow(win_name, 20, 20)
         cv2.imshow(win_name, vis_disp)
-        # ----------------------------------------------------------------
 
         k = cv2.waitKey(1) & 0xFF
         if k in (27, ord('q'), ord('Q')): break

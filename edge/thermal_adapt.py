@@ -1,5 +1,4 @@
-# Scaffold to fine-tune YOLOv8n on a thermal (IR) dataset once you have one.
-# Provide a thermal.yaml dataset file (Ultralytics format), then un-comment train().
+# Scaffold to fine-tune YOLOv8n on a thermal (IR) dataset once we have procure one.
 from ultralytics import YOLO
 
 def main():
