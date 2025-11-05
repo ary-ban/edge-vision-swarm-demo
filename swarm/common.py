@@ -41,7 +41,7 @@ def msg_heartbeat(agent_id, listen_port, pose=None, battery=100):
         "id": agent_id,
         "ts": now_ms(),
         "listen_port": listen_port,
-        "pose": pose or [0.0, 0.0, 0.0],  # x,y,z or lon,lat,alt if you have it
+        "pose": pose or [0.0, 0.0, 0.0],
         "battery": battery
     }
 
@@ -61,5 +61,5 @@ def msg_assignment(agent_id, note="track_best"):
         "t": "assign",
         "to": agent_id,
         "ts": now_ms(),
-        "mode": note  # for demo, single mode: track_best
+        "mode": note
     }

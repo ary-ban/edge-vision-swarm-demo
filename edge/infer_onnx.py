@@ -1,5 +1,3 @@
-# Minimal ONNXRuntime YOLOv8n demo (simple & light)
-# Run: --model yolov8n.onnx --source 0
 import argparse, time, cv2, numpy as np, onnxruntime as ort
 
 COCO_NAMES = [
