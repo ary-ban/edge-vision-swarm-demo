@@ -231,7 +231,6 @@ def main():
         else:
             vis_disp = vis
         cv2.resizeWindow(win_name, disp_w, disp_h)
-        cv2.moveWindow(win_name, 20, 20)
         cv2.imshow(win_name, vis_disp)
 
         k = cv2.waitKey(1) & 0xFF
